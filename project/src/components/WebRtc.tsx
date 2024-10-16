@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { cn } from "@/lib/utils";
 import { peer } from "@web/rtc";
 import { Button, Input, message } from "antd";
+import { Download, File, Plus } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { ScrollArea } from "./ui/scroll-area";
-import { cn } from "@/lib/utils";
 
 enum MessageType {
   LOCAL = "local",
@@ -12,6 +13,19 @@ enum MessageType {
 interface IMessage {
   type: MessageType;
   data: any;
+  file?: File;
+  src?: string | any;
+  fileType?: string;
+}
+
+function handleFile(file: File): Promise<string> {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      resolve(reader.result as string);
+    };
+    reader.readAsDataURL(file);
+  });
 }
 
 export default function WebRtc() {
@@ -20,6 +34,9 @@ export default function WebRtc() {
   const conn = useRef<any>();
   // 视频连接
   const currentCallRef = useRef<any>();
+
+  //信息载体
+  const messageWrap = useRef<IMessage>();
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const [localId, setLocalId] = useState<string>("");
@@ -32,12 +49,23 @@ export default function WebRtc() {
   const [messageList, setMessageList] = useState<IMessage[]>([]);
 
   const initPeer = () => {
-    peerRef.current!.on("open", (id:any) => {
+    peerRef.current!.on("open", (id: any) => {
       setLocalId(id);
     });
-    peerRef.current!.on("connection", (connection:any) => {
+    peerRef.current!.on("connection", (connection: any) => {
       connection.on("data", (data: any) => {
-        setMessageList((prev) => [...prev, { type: MessageType.REMOTE, data }]);
+        /**
+         * TODO:将Uint8Array文件数据转成Blob数据对象
+         */
+
+        setMessageList((prev) => [
+          ...prev,
+          {
+            ...data,
+            type: MessageType.REMOTE,
+            file: new Blob([data.file], { type: data.fileType }),
+          },
+        ]);
       });
     });
 
@@ -83,12 +111,9 @@ export default function WebRtc() {
       message.error("请输入消息内容");
       return;
     }
-    setMessageList((prev) => [
-      ...prev,
-      { type: MessageType.LOCAL, data: messages },
-    ]);
-    conn.current.send(messages);
-
+    setMessageList((prev) => [...prev, messageWrap.current!]);
+    // console.log("messageWrap.current:", messageWrap.current);
+    conn.current.send(messageWrap.current!);
     setMessages("");
   };
 
@@ -131,6 +156,35 @@ export default function WebRtc() {
     });
   };
 
+  const handleMessges = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setMessages(e.target.value);
+    messageWrap.current = {
+      type: MessageType.LOCAL,
+      data: e.target.value,
+    };
+  };
+
+  //处理文件发送
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files![0];
+    setMessages(() => file.name);
+    const isImg = file.type.includes("image");
+    const imgSrc = await handleFile(file);
+
+    messageWrap.current = {
+      type: MessageType.LOCAL,
+      data: file.name,
+      file: file, //new Blob([file], { type: file.type })
+      fileType: file.type,
+      src: isImg ? imgSrc : null,
+    };
+  };
+
+  const handleClickFile = (raw: IMessage) => {
+    const url = URL.createObjectURL(raw.file!);
+    window.open(url);
+  };
+
   useEffect(() => {
     initPeer();
   }, []);
@@ -164,7 +218,8 @@ export default function WebRtc() {
         <Input
           className="w-96"
           value={remoteId}
-          onChange={(e) => setRemoteId(e.target.value)}
+          placeholder="请输入远程连接用户ID"
+          onChange={(e) => setRemoteId(() => e.target.value)}
         />
         <Button type="primary" onClick={handleConnectPeer}>
           连接
@@ -211,9 +266,23 @@ export default function WebRtc() {
               >
                 {m.type === MessageType.LOCAL ? (
                   <>
-                    <span className="mr-1 bg-green-500 p-2 rounded-md text-white">
-                      {m.data}
-                    </span>
+                    {m.data && !m.file ? (
+                      <span className="mr-1 bg-green-500 p-2 rounded-md text-white">
+                        {m.data}
+                      </span>
+                    ) : (
+                      <span className="mr-1 bg-slate-400 p-2 rounded-md text-white">
+                        {m.fileType?.includes("image") ? (
+                          <img
+                            src={m.src}
+                            className="max-w-[10rem] max-h-[10rem] object-contain"
+                          />
+                        ) : (
+                          m.data
+                        )}
+                      </span>
+                    )}
+
                     <span
                       className={cn(
                         "p-2 rounded-md min-w-10 text-center text-white bg-slate-400"
@@ -229,12 +298,33 @@ export default function WebRtc() {
                         "p-2 rounded-md min-w-10 text-center text-white bg-slate-400"
                       )}
                     >
-                      {/* {m.type === MessageType.LOCAL ? "我" : "对方"} */}
                       {"对方".slice(0, 1)}
                     </span>
-                    <span className="mr-1 bg-green-500 p-2 rounded-md text-white">
-                      {m.data}
-                    </span>
+                    {m.data && !m.file ? (
+                      <span className="mr-1 bg-green-500 p-2 rounded-md text-white">
+                        {m.data}
+                      </span>
+                    ) : (
+                      <span className="mr-1 bg-slate-400 p-2 rounded-md text-white">
+                        {m.fileType?.includes("image") ? (
+                          <img
+                            src={m.src}
+                            className="max-w-[10rem] max-h-[10rem] object-contain"
+                          />
+                        ) : (
+                          <>
+                            <div
+                              className="h-full flex flex-col items-center cursor-pointer relative"
+                              onClick={() => handleClickFile(m)}
+                            >
+                              <File className="w-10 h-10"></File>
+                              <Download className="w-5 h-5 mt-1 absolute bottom-7 left-8"></Download>
+                              <span className="text-sm">{m.data}</span>
+                            </div>
+                          </>
+                        )}
+                      </span>
+                    )}
                   </>
                 )}
               </div>
@@ -246,11 +336,19 @@ export default function WebRtc() {
         <Input
           className="w-96"
           value={messages}
-          onChange={(e) => setMessages(e.target.value)}
+          onChange={(e) => handleMessges(e)}
         />
         <Button type="primary" onClick={handleSendMessage}>
           发送
         </Button>
+        <div className="flex relative w-8 h-8">
+          <input
+            type="file"
+            className="opacity-0 w-full"
+            onChange={(e) => handleFileChange(e)}
+          />
+          <Plus className="absolute top-0 left-0 w-8 h-8 cursor-pointer pointer-events-none"></Plus>
+        </div>
       </div>
     </div>
   );
